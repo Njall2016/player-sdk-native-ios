@@ -11,13 +11,10 @@
 #import <AVFoundation/AVFoundation.h>
 #import "KPIMAPlayerViewController.h"
 #import "KPViewControllerProtocols.h"
+#import "KCastProvider.h"
 
-static NSString *ChromecastClassName = @"KPChromecast";
 static NSString *PlayerClassName = @"KPlayer";
-
-static NSString *ChromeCastPlayerClassName = @"KCCPlayer";
 static NSString *WideVinePlayerClass = @"WVPlayer";
-
 static NSString *PlayKey = @"play";
 static NSString *PauseKey = @"pause";
 static NSString *StopKey = @"stop";
@@ -50,8 +47,15 @@ static NSString *PostrollEndedKey = @"postEnded";
 - (void)prepareForChangeConfiguration;
 - (void)setAssetParam:(NSString*)key toValue:(id)value;
 - (void)backToForeground;
+- (void)selectAudioTrack:(int)trackId;
+- (void)selectTextTrack:(NSString *)locale;
+
+
+- (void)sendCastRecieverTextMessage:(NSString *)message;
+- (void)setCastProvider:(KCastProvider *)castProvider autoPlay:(BOOL)autoPlay;
 
 @property (nonatomic, strong) id<KPlayer> player;
+@property (nonatomic, strong) KCastProvider *castProvider;
 @property (nonatomic, weak) id<KPlayerFactoryDelegate> delegate;
 @property (nonatomic, copy) NSString *playerClassName;
 @property (nonatomic, copy) NSString *src;
@@ -63,4 +67,6 @@ static NSString *PostrollEndedKey = @"postEnded";
 @property (nonatomic, assign) BOOL isReleasePlayerPositionEnabled;
 @property (nonatomic, strong) KPIMAPlayerViewController *adController;
 @property (nonatomic, strong) id kIMAWebOpenerDelegate;
+@property (nonatomic, assign) BOOL preferSubtitles;
+
 @end

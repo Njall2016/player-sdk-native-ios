@@ -56,9 +56,9 @@ NSString *const LocalContentId = @"localContentId";
     if (components.count == 2) {
         NSArray *hashTagParams = [components.lastObject componentsSeparatedByString:@"&"];
         for (NSString *hashTagParam in hashTagParams) {
-            NSArray *param = [hashTagParam componentsSeparatedByString:@"="];
+            NSArray<NSString*> *param = [hashTagParam componentsSeparatedByString:@"="];
             if (param.count == 2 && [param.firstObject isEqualToString:LocalContentId]) {
-                return param.lastObject;
+                return param.lastObject.length > 0 ? param.lastObject : nil;
             }
         }
     }
@@ -76,6 +76,9 @@ NSString *const LocalContentId = @"localContentId";
                             @"nativeAction",
                             @"doubleClickRequestAds",
                             @"language",
+                            @"captions",
+                            @"audioTrackSelected",
+                            @"chromecastAppId",
                             @"textTrackSelected"];
     KPLogTrace(@"Exit");
     return (Attribute)[attributes indexOfObject:self];
@@ -149,24 +152,48 @@ NSString *const LocalContentId = @"localContentId";
     return function;
 }
 
-- (NSString *)md5 {
-    const char *cStr = [self.sorted.absoluteString UTF8String];
+- (NSString *)hexedMD5 {
+    const char *cStr = self.UTF8String;
     unsigned char digest[16];
-    CC_MD5( cStr, (int)strlen(cStr), digest ); // This is the md5 call
+    CC_MD5( cStr, (int)strlen(cStr), digest);
     
     NSMutableString *output = [NSMutableString stringWithCapacity:CC_MD5_DIGEST_LENGTH * 2];
     
-    for(int i = 0; i < CC_MD5_DIGEST_LENGTH; i++)
+    for(int i = 0; i < CC_MD5_DIGEST_LENGTH; i++) {
         [output appendFormat:@"%02x", digest[i]];
+    }
     
     return  output;
 }
 
 - (BOOL)isWV {
+    return [self.streamType isEqualToString:@"wvm"];
+}
+
+- (NSString *)mimeType {
+    NSDictionary *mimeTypes = @{@"m3u8": @"application/vnd.apple.mpegurl",
+                                @"mp4": @"video/mp4"};
+    if (self.streamType) {
+        return mimeTypes[self.streamType];
+    }
+    return nil;
+}
+
+- (NSArray *)castParams {
+    NSString *test = @"|";
+    NSArray *comps = [self componentsSeparatedByString:test];
+    if (comps.count == 3) {
+        NSArray *temp = [comps subarrayWithRange:(NSRange){1, 2}];
+        return temp;
+    }
+    return nil;
+}
+
+- (NSString *)streamType {
     NSURLComponents *comp = [NSURLComponents componentsWithURL:[NSURL URLWithString:self]
                                        resolvingAgainstBaseURL:NO];
     NSArray *videoNameComp = [comp.path.lastPathComponent componentsSeparatedByString:@"."];
-    return [videoNameComp.lastObject isEqualToString:@"wvm"];
+    return videoNameComp.lastObject;
 }
 
 - (NSString *)documentPath {
@@ -174,7 +201,7 @@ NSString *const LocalContentId = @"localContentId";
     return ([paths count] > 0) ? [paths.firstObject stringByAppendingPathComponent:self] : nil;
 }
 
-- (NSURL *)sorted {
+- (NSURL *)urlWithSortedParams {
     NSURL *url = [NSURL URLWithString:self];
     NSString *query = [url.query stringByRemovingPercentEncoding];
     NSMutableArray *params = [[NSMutableArray alloc] initWithArray:[query componentsSeparatedByString:@"&"]];

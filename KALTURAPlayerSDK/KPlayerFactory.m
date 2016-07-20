@@ -11,19 +11,35 @@
 #import "KPLog.h"
 #import "NSString+Utilities.h"
 #import "KPAssetBuilder.h"
+#import "CastProviderInternalDelegate.h"
+#import "KCastMediaRemoteControl.h"
 
-@interface KPlayerFactory() <KPlayerDelegate> {
+typedef NS_ENUM(NSInteger, CurrentPlyerType) {
+    CurrentPlyerTypeDefault,
+    CurrentPlyerTypeIMA,
+    CurrentPlyerTypeCast
+};
+
+@interface KCastProvider ()
+@property (nonatomic, weak) id<CastProviderInternalDelegate> internalDelegate;
+@end
+
+@interface KPlayerFactory() <KPlayerDelegate, CastProviderInternalDelegate, KCastMediaRemoteControlDelegate> {
     NSString *key;
     BOOL isSeeked;
     BOOL isReady;
     BOOL _backToForeground;
     NSTimeInterval _lastPosition;
+    CurrentPlyerType currentPlayerType;
+    BOOL isPlaying;
+    BOOL _isCastAutoPlay;
 }
 
 @property (nonatomic, strong) UIViewController *parentViewController;
 @property (nonatomic) BOOL isContentEnded;
 @property (nonatomic) BOOL isAllAdsCompleted;
 @property (nonatomic, retain) KPAssetBuilder* assetBuilder;
+@property (nonatomic, strong) id<KCastMediaRemoteControl> castPlayer;
 @end
 
 @implementation KPlayerFactory
@@ -43,6 +59,7 @@
     self = [super init];
     if (self) {
         self.playerClassName = className;
+        self.preferSubtitles = YES;
         return self;
     }
     return nil;
@@ -61,6 +78,8 @@
         Class class = NSClassFromString(_playerClassName);
         _player = [(id<KPlayer>)[class alloc] initWithParentView:_parentViewController.view];
         _player.delegate = self;
+        _player.preferSubtitles = self.preferSubtitles;
+        
     }
     return _player;
 }
@@ -87,6 +106,17 @@
     [_assetBuilder setContentUrl:src];
 }
 
+-(void)selectAudioTrack:(int)trackId{
+    KPLogDebug(@"Change audio track Id:%@",trackId);
+    [_player selectAudioTrack:trackId];
+}
+
+-(void)selectTextTrack:(NSString*)locale{
+    KPLogDebug(@"Change text track Id:%@",locale);
+    [_player selectTextTrack:locale];
+}
+
+
 -(void)setLicenseUri:(NSString*)licenseUri {
     [_assetBuilder setLicenseUri:licenseUri];
 }
@@ -100,6 +130,10 @@
 }
 
 - (void)setCurrentPlayBackTime:(NSTimeInterval)currentPlayBackTime {
+    if (currentPlayerType == CurrentPlyerTypeCast) {
+        [_castPlayer seekToTimeInterval:currentPlayBackTime];
+        return;
+    }
     if (isReady) {
         _player.currentPlaybackTime = currentPlayBackTime;
     } else {
@@ -175,6 +209,85 @@
     _src = nil;
     _playerClassName = nil;
 }
+
+#pragma mark
+#pragma mark Casting
+- (void)setCastProvider:(KCastProvider *)castProvider {
+    if (castProvider) {
+        _isCastAutoPlay = NO;
+        _castProvider = castProvider;
+        _castProvider.internalDelegate = self;
+    }
+}
+
+- (void)setCastProvider:(KCastProvider *)castProvider autoPlay:(BOOL)autoPlay {
+    [self setCastProvider:castProvider];
+    _isCastAutoPlay = autoPlay;
+}
+
+- (void)sendCastRecieverTextMessage:(NSString *)message {
+    BOOL check = [_castProvider.castChannel sendTextMessage:message];
+    if (check) {
+        NSLog(@"%@", message);
+    }
+}
+
+#pragma mark CastProviderInternalDelegate
+- (void)startCasting:(id<KCastMediaRemoteControl>)castPlayer {
+    if (!_castPlayer) {
+        _castPlayer = castPlayer;
+        [_castPlayer addObserver:self];
+    }
+    
+    [_delegate player:_player eventName:@"chromecastDeviceConnected" value:nil];
+    [_castPlayer setVideoUrl:_src startPosition:self.currentPlayBackTime autoPlay:_isCastAutoPlay];
+    
+    if ([_castProvider.delegate respondsToSelector:@selector(castProvider:mediaRemoteControlReady:)]) {
+        [_castProvider.delegate castProvider:_castProvider mediaRemoteControlReady:_castPlayer];
+    }
+}
+
+- (void)updateCastState:(NSString *)state {
+    isPlaying = _player.isPlaying;
+    [_delegate player:_player eventName:state value:nil];
+}
+
+- (void)stopCasting {
+    [_delegate player:_player eventName:@"chromecastDeviceDisConnected" value:nil];
+    [_castPlayer removeObserver:self];
+    [_player setCurrentPlaybackTime:_castPlayer.currentTime];
+    _castPlayer = nil;
+    currentPlayerType = CurrentPlyerTypeDefault;
+    [self play];
+}
+
+- (void)readyToPlay:(NSTimeInterval)streamDuration{
+    currentPlayerType = CurrentPlyerTypeCast;
+    [self.delegate player:_player
+                eventName:DurationChangedKey
+                    value:@(streamDuration).stringValue];
+    [self.delegate player:_player
+                eventName:LoadedMetaDataKey
+                    value:@""];
+    [self.delegate player:_player eventName:CanPlayKey value:nil];
+    [_delegate player:_player eventName:@"hideConnectingMessage" value:nil];
+    
+    if (isPlaying) {
+        [_castPlayer play];
+    }
+}
+
+- (void)castPlayerState:(NSString *)state {
+    [_delegate player:_player eventName:state value:nil];
+}
+
+#pragma mark KChromecastPlayerDelegate
+- (void)updateProgress:(NSTimeInterval)currentTime {
+    [self.delegate player:_player
+                eventName:TimeUpdateKey
+                    value:@(currentTime).stringValue];
+}
+
 
 
 #pragma mark KPlayerEventsDelegate
@@ -253,7 +366,11 @@
         [self.adController resume];
     }
     
-    if ([self.player respondsToSelector:@selector(play)]) {
+    if (currentPlayerType == CurrentPlyerTypeCast) {
+        [_castPlayer play];
+    }
+    
+    if (currentPlayerType == CurrentPlyerTypeDefault && [self.player respondsToSelector:@selector(play)]) {
         [self.player play];
     }
 }
@@ -261,6 +378,10 @@
 - (void)pause {
     if (_adController) {
         [self.adController pause];
+    }
+    
+    if (currentPlayerType == CurrentPlyerTypeCast) {
+        [_castPlayer pause];
     }
     
     if ([self.player respondsToSelector:@selector(pause)]) {
